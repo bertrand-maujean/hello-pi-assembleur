@@ -1,1 +1,20 @@
-Voir les commentaires dans le premier commit
+Programme d'apprentissage de l'assembleur 64 sous Linux pour quelqu'un qui n'avait plus fait d'assembleur depuis 25 ans
+Decouvertes lors de cette experience :
+- la doc des appels systeme Linux... Comme le monde libre en general, le bazar !
+- documentation de sys_brk en particulier... pas clair, mais on fini par comprendre*
+- apprendre a utiliser gdb... Je cherche toujours un front end graphique qui permettrait d'eviter les pb d'affichage
+
+(note * : le truc, c'est entre la fin du bss et le brk initial, la memoire n'est pas disponible... Alors que les docs
+trouvees semblaient indiquer que le tas commence apres le bss. C'est pas vrai. En plus, le programme ne se charge pas
+de la meme facon en natif et sous gdb, donc plantage uniquement quand je n'utilisais pas gdb. Remarque certainement
+tres platform-dependant)
+
+Sans libc ni gmp, c'est satisfaisant pour l'esprit.
+
+Algorithme utilise :
+- http://stanleyrabinowitz.com/bibliography/spigot.pdf
+- http://pi314.net/fr/goutte.php
+- Adapte pour calculer avec une base 10^k, pour que l'extraction des chiffres soit triviale
+- Les décimales ont l'air justes sauf les toutes dernieres. Mais il y a peut etre des cas non geres (quotient 99999 en fin de ligne)... Il faudra que je relise en detail le papier
+- Je pense que c'est le seul algorithme valable pour calculer beaucoup de decimales sans les fonctions de precision arbitraire
+- Par contre, algorithme au moins en n^2, donc la j'ai limite a 100k decimales. A priori, ne consomme pas trop de RAM.
