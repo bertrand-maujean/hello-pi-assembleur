@@ -3,6 +3,11 @@
 ; $ ld hw.o 
 ; $ ./a.out 
 
+
+
+
+
+
 BITS 64
 CPU X64
 
@@ -10,7 +15,7 @@ CPU X64
 ; *********************************************************
 ; * Constantes du calcul
 ; *********************************************************
-CONST_NBDEC	equ 100000		; nombre de décimales qu'on veut calculer
+CONST_NBDEC	equ 100200	; nombre de décimales qu'on veut calculer
 CONST_BASE	equ 1000000000	; base des calculs
 CONST_BASEC	equ 9		; nb de chiffres en base 10 pour chaque digit dans la base de calcul
 
@@ -37,6 +42,10 @@ msg_brk_nok	db 10,"brk() ne semble pas nous donner de mémoire", 10, 0
 msg_alloc_done	db "Allocation du tas faite.", 10, 0
 msg_init_done	db "Initialisation des tableaux faite.",10,0
 msg_test_brk	db "Retour de brk(0) : ",0
+msg_tiret	db "-",0
+msg_par_o	db "     (",0
+msg_par_f	db ")",0
+
 
 
 msg_init_alg1	db "Taille des tableaux : ",0
@@ -46,7 +55,13 @@ msg_init_alg4	db "Base de calcul : ",0
 
 msg_calcul	db "Lancement du calcul :",10,0
 
+msg_pi1		db "pi = 3.", 10,0
 
+predigits_nb	dq 0 ; nb de predigits dans le buffer
+predigits_entry dq 0 ; index de la premiere place libre dans le buffer des predigits
+predigits_max	dq 0 ; va stocker pendant tout le focntionnement le maximum de remplissage du buffer
+			; si on atteint le max, on sait que le résultat n'est pas fiable
+			 
 
 
 ; *********************************************************
@@ -68,9 +83,19 @@ ad_somme	resq	1
 ad_retenue	resq	1
 ad_chiffres_pi	resq	1
 
+
 nbdec		resq	1 ; nombre de décimales qu'on veut calculer
 nbmax		resq	1 ; taille des tableaux
 nbiterations	resq	1 ; nombre d'itérations à prévoir
+
+predigits	resq	16	; Buffer circulaire des predigits
+				; voir autres variables dans le segment data
+
+
+dest_chiffre	resq	1	; pointeur destination pour les chiffres extraits
+				; (dans ad_chiffres_pi)
+dest_chiffres	resq	1	; index du prochain chiffre décimal ascii a placer dans le buffer final
+
 
 fin_bss		equ	$
 
@@ -104,6 +129,16 @@ _start:
 	pop rcx
 	loop .b1
 	
+	
+	;mov rax, [ad_chiffres_pi] ; affichage sans formattage
+	;call printz
+
+	mov rax, crlf
+	call printz
+	call printz
+	
+	call print_nombre_pi
+		
 
 	; exit()
 	mov rax, 60
@@ -191,7 +226,8 @@ prepare_memoire:
 	add rax, rbx
 
 	; puis le tableau des décimales en base 10 ascii
-	mov [ad_chiffres_pi], rax
+	mov [ad_chiffres_pi], rax	; adresse de base
+	mov [dest_chiffres], rax	; l'index qui sera utilisé au fur et à mesure
 
 	ret
 	
@@ -300,6 +336,8 @@ init_algo:
 	mov rax, crlf
 	call printz
 
+
+
 	ret
 	
 
@@ -385,8 +423,13 @@ iteration:
 		
 	; cas r8 = 0 : on affiche les chiffres trouvés, qui sont dans le quotient dans rax
 .sort_chiffres:
-	mov rbx, CONST_BASEC
-	call print_dec
+	call traite_predigit
+	;mov rbx, CONST_BASEC
+	;call print_dec
+	;mov rax, crlf
+	;call printz
+	
+
 		
 .saute:
 	dec r8
@@ -394,10 +437,168 @@ iteration:
 	jnz .b2	; Nb : l'iteration r8==0 est faite, on arrête apr_s retenue soit r8=-1
 		; certainement équivalent à un jump if not borrow
 		
-		
 	
 	ret
 
+
+
+; *********************************************************
+; * Gestion du buffer circulaire des predigits
+; * Entrée : rax le predigit a empiler 
+; *********************************************************
+;predigits_nb	dq 0  ; nb de predigits dans le buffer
+;predigits_entry dq 0 ; index de la prochaine place libre dans le buffer des predigits
+;predigits_max	qd 0  ; va stocker pendant toute le focntionnement le maximum de remplissage du buffer
+			; si on atteint le max, on sait que le résultat n'est pas fiable
+; ici on va utiliser l'adressage SIB scale/index/base voir §1.4 volume 3 de la spec AMD
+
+
+; *** Traite un predigit qui vient d'arriver dans rax
+traite_predigit:
+	push rax
+	push rbx
+	push rcx
+	push rdx
+
+	;push rax
+	;mov rax, msg_par_o
+	;call printz
+	;pop rax
+	;push rax
+	;mov rbx, CONST_BASEC ; affiche un predigit validé
+	;call print_dec
+	;mov rax, msg_par_f
+	;call printz
+	;pop rax
+	
+	
+	cmp rax, CONST_BASE-1
+	jae .traite_retenue ; si >= base, alors il y a une retenue à propager
+	call put_predigit	
+	
+.b1:	
+	cmp qword [predigits_nb],3 ; on va dépiler les predigits validés, jusqu'à en laisser 2 dans le buffer
+	jb .fin 
+	call get_predigit
+	
+	call sprintf_digit ; n'affiche pas directement, envoie dans le buffer
+	
+	;mov rbx, CONST_BASEC ; affiche un predigit validé
+	;call print_dec
+	;mov rax, msg_tiret
+	;call printz
+		
+	jmp .b1
+
+
+.traite_retenue: ; traite la retenue, et ne dépile pas
+	xor rdx, rdx
+	mov rbx, CONST_BASE
+	div rbx
+	
+	push rdx
+	call propage_retenue_predigit	; propage le quotient qui est dans rax en tant que retenue
+	pop rax
+	call put_predigit		; puis empile le reste comme digit valide
+
+.fin:
+	;mov rax, crlf
+	;call printz
+
+	pop rdx
+	pop rcx
+	pop rbx
+	pop rax
+	ret
+	
+; *** envoie un predigit (rax) dans le buffer
+put_predigit:
+	push rax
+	push rbx
+	push rcx
+	
+	mov rcx, [predigits_entry] ; depose l'element
+	lea rbx, [predigits]
+	mov [rbx+rcx*8], rax
+	
+	mov rbx, [predigits_entry] ; calcule la prochaine place libre
+	inc rbx
+	and rbx, 0xf
+	mov [predigits_entry], rbx
+
+	
+	mov rbx, [predigits_nb]		; calcule le nombre d'elements dans le buffer
+	inc rbx
+	mov [predigits_nb], rbx
+	
+	cmp [predigits_max], rbx	; on stocke la taille maximale du buffer atteinte pendant le calcul
+	ja .b1
+	mov [predigits_max], rbx 	; l'instruction 'conditional move' CMOVxx a ses operandes dans la mauvais sens pour nous
+.b1:
+	
+	pop rcx
+	pop rbx	
+	pop rax
+	ret
+	
+; *** extrait un predigit du buffer (vers rax)	
+get_predigit:
+	push rbx
+	push rcx
+	
+	mov rcx, [predigits_nb]	
+	cmp rcx, 0
+	jz .sortie ; comportement anormal, on ne devrait pas sortir des elements d'un buffer vide
+	
+	mov rcx, [predigits_entry] ; calcule l'adresse de l'elment à sortir
+	sub rcx, [predigits_nb]
+	and rcx, 0xf
+	
+	lea rbx, [predigits]
+	mov rax, [rbx+rcx*8]
+	
+	dec qword [predigits_nb] ; qui n'était pas nul vu le test de protection au debut
+	
+.sortie:
+	pop rcx
+	pop rbx
+	ret
+	
+
+; *** propage la retenue rax dans les predigits contenus dans le buffer
+; *** Il faudrait réflechier à l'algorithme en base 10^k, j'ai l'impression que la retenue
+; *** ne peut être égale qu'à 1
+propage_retenue_predigit:
+	push rax
+	push rbx
+	push rcx
+	push rdx
+
+	lea rbx, [predigits]
+
+	; calcule la position du dernier chiffre entré
+	mov rcx, [predigits_entry]
+	dec rcx
+	and rcx, 0xf
+	clc
+
+.propage:		
+	adc [rbx+rcx*8], rax ; ajoute
+	jnc .fin
+	xor rax,rax	; pour la suite on a tout au plus un bit de retenue à ajouter !
+	dec rcx
+	and rcx, 0xf
+	jmp .propage
+
+.fin:
+	pop rdx
+	pop rcx
+	pop rbx
+	pop rax
+	ret
+	
+	
+	
 	
 ; *********************************************************
 ; * Affiche la valeur retour d'un brk(0)
@@ -484,6 +685,14 @@ printz:
 	push rbp
 	mov rbp, rsp
 	
+	push rax
+	push rbx
+	push rcx
+	push rdx
+	push rsi
+	push rdi
+	
+	
 	mov rdx,0
 	mov rbx,rax
 	
@@ -505,6 +714,14 @@ printz:
 	syscall
 	
 .chaine_nulle:
+	pop rdi
+	pop rsi
+	pop rdx
+	pop rcx
+	pop rbx
+	pop rax
+	
+
 	mov rsp, rbp
 	pop rbp
 	ret
@@ -567,15 +784,15 @@ print_hex64:
 print_dec:
 	push rbp
 	mov rbp, rsp
-	
+	sub rsp, 32	; Affecte 32 octets pour contenir les chiffres
+			; adresse de base lea xxx, [rbp-32]
+
 	push rax
 	push rbx
 	push rcx
 	push rdx
-	
-	
-	sub rsp, 32	; Affecte 32 octets pour contenir les chiffres
-			; adresse de base lea xxx, [rbp-32]
+	push rsi
+	push rdi
 
 
 	mov rsi, rbx	; sera récupéré plus tard pour compléter les zéros à gauche
@@ -632,7 +849,8 @@ print_dec:
 	lea rax, [rbp-32]
 	call printz
 		
-		
+	pop rdi
+	pop rsi
 	pop rdx
 	pop rcx
 	pop rbx
@@ -643,4 +861,123 @@ print_dec:
 	ret
 
 
+
+; *********************************************************
+; * Envoie dans le buffer de sortie le contenu d'un digit
+; * validé
+; * Entrée :
+; *	RAX = le digit
+; * Sortie : le buffer est complété
+; *********************************************************
+sprintf_digit:
+	push rax
+	push rbx
+	push rcx
+	push rdx
+
+	; extrait la quantité fixe de chiffre et les place sur la pile	
+	mov rcx, CONST_BASEC ; le nombre de chiffres qu'on doit extraire
+	mov rbx, 10
+.b1:
+	xor rdx,rdx
+	div rbx
+	push rdx
+	loop .b1
+	
+	; dépile les même chiffres et les place dans le buffer
+	mov rdi, [dest_chiffres] ; buffer de destination, qui est initialisé à ad_chiffres_pi
+	mov rcx, CONST_BASEC
+	cld
+.b2:
+	pop rax
+	add al, '0'
+	stosb
+	loop .b2
+	
+	xor al, al ; met un 0 de fin de chaine, mais en fait notre buffer est déjà initialisé à 0
+	stosb	
+	
+	add qword [dest_chiffres], CONST_BASEC
+	
+	pop rdx
+	pop rcx
+	pop rbx
+	pop rax
+	ret
+	
+
+
+; *********************************************************
+; * Affiche le résultat sur stdout avec un peu de mise 
+; * en forme
+; * Entrée : tout dans les variables globales
+; * Sortie : stdout
+; *********************************************************
+print_nombre_pi:
+	; Affiche le premier chiffre suivi d'un point
+	; petite entorse : le 3 affiché n'est pas celui du calcul
+	mov rax, msg_pi1 ; message fixe avec le 3 des unités et le point décimal
+	call printz
+
+
+
+	mov rsi, [ad_chiffres_pi]
+	; déjà, si il y a des zéros au début, saute-les
+.b2:	cmp byte [rsi], '0'
+	jnz .b1
+	inc rsi
+	jmp .b2
+.b1:	
+	inc rsi ; saute le 3
+	mov r8,0
+	
+.b50:	
+	; Vérifie si il reste au moins 50 chiffres
+	mov rcx, 50
+	push rsi
+.b3:	
+	lodsb
+	cmp al, 0
+	loopnz .b3
+	pop rsi
+	jnz .b4
+	
+	; il reste moins de 50 chiffres
+	push rsi
+	mov rax, rsi
+	call printz
+	mov rax, crlf
+	call printz
+	pop rsi
+	jmp .fin	
+
+.b4:
+	; on affiche 50 chiffres 
+	; rsi contient l'adresse du buffer
+	push rsi
+	mov rax, 1 ; sys_write
+	mov rdi, 1 ; stdout
+	mov rdx, 50
+	syscall
+	pop rsi
+	add rsi, 50
+
+	add r8, 50
+
+	mov rax, msg_par_o
+	call printz
+	mov rax, r8
+	mov rbx, 0
+	call print_dec
+	mov rax, msg_par_f
+	call printz
+	
+	mov rax, crlf
+	call printz
+
+	jmp .b50 ; va afficher une nouvelle ligne de 50
+
+.fin:
+	ret
+	
 

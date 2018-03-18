@@ -4,6 +4,8 @@ Decouvertes lors de cette experience :
 - documentation de sys_brk en particulier... pas clair, mais on fini par comprendre*
 - apprendre a utiliser gdb... Je cherche toujours un front end graphique qui permettrait d'eviter les pb d'affichage
 
+Le programme s'appelle "hw.asm" car au début, c'était juste un "hello world".
+
 (note * : le truc, c'est entre la fin du bss et le brk initial, la memoire n'est pas disponible... Alors que les docs
 trouvees semblaient indiquer que le tas commence apres le bss. C'est pas vrai. En plus, le programme ne se charge pas
 de la meme facon en natif et sous gdb, donc plantage uniquement quand je n'utilisais pas gdb. Remarque certainement
@@ -15,6 +17,14 @@ Algorithme utilise :
 - http://stanleyrabinowitz.com/bibliography/spigot.pdf
 - http://pi314.net/fr/goutte.php
 - Adapte pour calculer avec une base 10^k, pour que l'extraction des chiffres soit triviale
-- Les décimales ont l'air justes sauf les toutes dernieres. Mais il y a peut etre des cas non geres (quotient 99999 en fin de ligne)... Il faudra que je relise en detail le papier
+- Les décimales ont l'air justes (sauf les toutes dernieres)
 - Je pense que c'est le seul algorithme valable pour calculer beaucoup de decimales sans les fonctions de precision arbitraire
-- Par contre, algorithme au moins en n^2, donc la j'ai limite a 100k decimales. A priori, ne consomme pas trop de RAM.
+- Par contre, algorithme au moins en n^2, donc la j'ai limite a 100k decimales. ça prend qq minutes. 
+  Mais pour le million, il faudrait certainement y passer qq heures
+- A priori, ne consomme pas trop de RAM par rapport à ce que le PC peut donner
+
+
+Pistes d'amelioration :
+- optimiser les registres pushés/popés
+- supprimer les tableaux numérateur et dénominateurs, et les remplacer par un calcul trivial
+- entrelacer les tableaux somme/reste/retenue, vu le mode de remplissage on bénéficierait certainement d'une bonne mise en cache L1
