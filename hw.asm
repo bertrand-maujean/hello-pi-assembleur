@@ -15,7 +15,7 @@ CPU X64
 ; *********************************************************
 ; * Constantes du calcul
 ; *********************************************************
-CONST_NBDEC	equ 100200	; nombre de décimales qu'on veut calculer
+CONST_NBDEC	equ 100000	; nombre de décimales qu'on veut calculer
 CONST_BASE	equ 1000000000	; base des calculs
 CONST_BASEC	equ 9		; nb de chiffres en base 10 pour chaque digit dans la base de calcul
 
@@ -46,6 +46,8 @@ msg_tiret	db "-",0
 msg_par_o	db "     (",0
 msg_par_f	db ")",0
 
+msg_temps1	db "Temps écoulé depuis démarrage (s) : ", 0
+msg_temps2	db ".",0
 
 
 msg_init_alg1	db "Taille des tableaux : ",0
@@ -63,6 +65,9 @@ predigits_max	dq 0 ; va stocker pendant tout le focntionnement le maximum de rem
 			; si on atteint le max, on sait que le résultat n'est pas fiable
 			 
 
+heure_dem_s	dq 0 ; Heure de demarrage du programme par sys_gettimeofday
+heure_dem_us	dq 0
+
 
 ; *********************************************************
 ; * Données statiques non initialisées
@@ -76,8 +81,6 @@ brk		resq	1 ; pour contenir le program break
 brk_dde		resq	1 ; et celui qu'on a demandé
 
 ;pointeurs vers les tableaux principals de l'algorithme
-ad_numerateur	resq	1
-ad_denominateur	resq	1
 ad_reste	resq	1
 ad_somme	resq	1
 ad_retenue	resq	1
@@ -97,6 +100,9 @@ dest_chiffre	resq	1	; pointeur destination pour les chiffres extraits
 dest_chiffres	resq	1	; index du prochain chiffre décimal ascii a placer dans le buffer final
 
 
+heure_cur_s	resq	1
+heure_cur_us	resq	1
+
 fin_bss		equ	$
 
 ; *********************************************************
@@ -106,21 +112,28 @@ section .text
 
 global _start
 _start:
+	call affiche_temps
+
 
 	;call test_brk
 	call prepare_memoire
 	call print_positionnement_memoire
 	mov rax, msg_alloc_done
 	call printz
+	mov rax, crlf
+	call printz
 	
 	call init_algo
 	mov rax, msg_init_done
+	call printz
+	mov rax, crlf
 	call printz
 
 
 	mov rax, msg_calcul
 	call printz
 
+	call affiche_temps
 
 	mov rcx, [nbiterations]
 .b1:
@@ -129,6 +142,7 @@ _start:
 	pop rcx
 	loop .b1
 	
+	call affiche_temps
 	
 	;mov rax, [ad_chiffres_pi] ; affichage sans formattage
 	;call printz
@@ -180,10 +194,6 @@ prepare_memoire:
 	mov [taille_tas], rbx
 
 	; Création d'un tas (malloc du pauvre)
-	;mov rax, fin_bss		; pour appeler brk(), on va se baser sur la fin du segment bss
-	;add rax, 0xfff			; calcule l'adresse de la premiere page suivante
-	;and rax, 0xfffffffffffff000	; car on préfère aligner notre tas sur une frontière de page
-	;mov [debut_tas], rax
 	; recherche du program break initial
 	mov rax, 12
 	xor rdi, rdi
@@ -214,10 +224,6 @@ prepare_memoire:
 
 	; positionne les tableaux principaux les uns à la suite des autres
 	mov rax, [debut_tas]
-	mov [ad_numerateur], rax
-	add rax, rbx
-	mov [ad_denominateur], rax
-	add rax, rbx
 	mov [ad_reste], rax
 	add rax, rbx
 	mov [ad_somme], rax
@@ -249,30 +255,6 @@ prepare_memoire:
 ; *********************************************************
 init_algo:
 	cld
-	
-	; pour le numerateur
-	mov rcx, [nbmax]
-	mov rdi, [ad_numerateur]
-	mov rax, 0
-.bcle1:	
-	stosq
-	inc rax
-	loop .bcle1
-	
-	
-	; pour le denominateur
-	mov rcx, [nbmax]
-	mov rdi, [ad_denominateur]
-	mov rax, 10
-	stosq
-	dec rcx
-	mov rax, 3
-.bcle2:	
-	stosq
-	inc rax
-	inc rax
-	loop .bcle2
-
 
 	; pour le reste
 	mov rcx, [nbmax]
@@ -394,10 +376,17 @@ iteration:
 	; (q,r) = somme div denominateur
 	mov rsi, [ad_somme]
 	add rsi, r9
-	mov rbx, [ad_denominateur]
-	add rbx, r9
+	
+	mov rbx, r8
+	shl rbx, 1
+	inc rbx
+	cmp rbx, 1 ; si on était colonne de gche, r8=0 donc rbx=1 quand on arrive ici
+	jnz .b3
+	mov rbx, CONST_BASE ; le denominateur en colonne 0 c'est la base
+	
+.b3:	
 	mov rax, [rsi]
-	div qword [rbx]
+	div rbx
 	; q dans rax, r dans rdx
 	
 	; pose le reste
@@ -411,11 +400,11 @@ iteration:
 	
 	; cas r8 >0 : on place la retenue dans la colonne plus à gauche
 	; retenue[n-1] = q*numerateur[n];
-	mov rsi, [ad_numerateur]
-	add rsi, r9
+	
 	mov rdi, [ad_retenue]
 	add rdi, r9
-	mul qword [rsi] ; q était encore dans rax
+	;mul qword [rsi] ; q était encore dans rax
+	mul r8 ; le numérateur est simplement le n° de colonne !
 	mov [rdi-8], rax
 	jmp .saute
 	
@@ -981,3 +970,73 @@ print_nombre_pi:
 	ret
 	
 
+
+; *********************************************************
+; * Stocke l'heure de demarrage dans heure_dem_s (us)
+; * Puis lors des appels suivants, affiche la durée 
+; * d'execution
+; * Utilise sys_gettimeofday
+; *********************************************************
+affiche_temps:
+	push rax
+	push rbx
+	push rcx
+	push rdx
+	push rsi
+	push rdi
+	
+	
+	cmp qword [heure_dem_s],0
+	jz .premier_appel
+	
+	; Appel suivant : on calcule la différence
+	mov rax, 96
+	mov rdi, heure_cur_s
+	xor rsi, rsi
+	syscall
+	
+	
+	mov r8, [heure_dem_s]
+	mov r9, [heure_dem_us]
+	
+	sub [heure_cur_us], r9
+	jnc .b1
+	dec qword [heure_cur_s]
+	add qword [heure_cur_us], 1000000
+		
+.b1:	
+	sub [heure_cur_s], r8
+	
+	mov rax, msg_temps1
+	call printz
+	mov rax, [heure_cur_s]
+	mov rbx, 0
+	call print_dec
+	mov rax, msg_temps2
+	call printz
+	mov rax, [heure_cur_us]
+	mov rbx, 6
+	call print_dec
+	mov rax, crlf
+	call printz
+	
+	
+	jmp .fin
+	
+	
+.premier_appel: ; Premier appel : on stocke la valeur courante dans heure_dem_xx
+	mov rax, 96
+	mov rdi, heure_dem_s
+	xor rsi, rsi
+	syscall
+	
+
+.fin:
+	pop rdi
+	pop rsi
+	pop rdx
+	pop rcx
+	pop rbx
+	pop rax
+	ret
+	
