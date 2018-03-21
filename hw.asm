@@ -15,7 +15,7 @@ CPU X64
 ; *********************************************************
 ; * Constantes du calcul
 ; *********************************************************
-CONST_NBDEC	equ 100000	; nombre de décimales qu'on veut calculer
+CONST_NBDEC	equ 20000	; nombre de décimales qu'on veut calculer
 CONST_BASE	equ 1000000000	; base des calculs
 CONST_BASEC	equ 9		; nb de chiffres en base 10 pour chaque digit dans la base de calcul
 
@@ -67,6 +67,11 @@ predigits_max	dq 0 ; va stocker pendant tout le focntionnement le maximum de rem
 
 heure_dem_s	dq 0 ; Heure de demarrage du programme par sys_gettimeofday
 heure_dem_us	dq 0
+
+msg_max_reste	db "Valeur max atteinte par le reste =",0
+msg_max_somme	db "Valeur max atteinte par la somme =",0
+msg_max_retenue db "valeur max atteinte par la retenue =",0
+
 
 
 ; *********************************************************
@@ -135,14 +140,26 @@ _start:
 
 	call affiche_temps
 
+	; registres qui vont servir à stocker les valeurs max atteintes sur les élements de reste, somme, retenue (resp.)
+	xor r11, r11
+	xor r12, r12
+	xor r13, r13	
+
+
 	mov rcx, [nbiterations]
 .b1:
 	push rcx
+
 	call iteration
+
 	pop rcx
 	loop .b1
 	
+	push r11
 	call affiche_temps
+	pop r11
+	call affiche_maximums
+		
 	
 	;mov rax, [ad_chiffres_pi] ; affichage sans formattage
 	;call printz
@@ -158,6 +175,44 @@ _start:
 	mov rax, 60
 	mov rdi, 0
 	syscall
+
+
+; *********************************************************
+; * Affichage des maximums atteints dans les elements
+; * des tableaux. Stockés dans r11,r12,r13
+; *********************************************************
+affiche_maximums:
+	mov eax, crlf
+	call printz
+	
+
+
+	mov rax, msg_max_reste
+	call printz
+	mov rax, r11
+	mov rbx, 0
+	call print_dec
+	mov rax, crlf
+	call printz
+		
+	mov rax, msg_max_somme
+	call printz
+	mov rax, r12
+	mov rbx, 0
+	call print_dec
+	mov rax, crlf
+	call printz
+			
+	mov rax, msg_max_retenue
+	call printz
+	mov rax, r13
+	mov rbx, 0
+	call print_dec
+	mov rax, crlf
+	call printz	
+		
+	ret
+
 
 
 ; *********************************************************
@@ -338,6 +393,11 @@ iteration:
 .b1:
 	lodsq
 	mul rbx
+	
+	; Note la valeur max de reste
+	cmp rax, r11
+	cmova r11, rax
+	
 	stosq
 	loop .b1
 	
@@ -372,6 +432,9 @@ iteration:
 	add rax, [rbx]
 	mov [rdi], rax
 	
+	; Note la valeur max de somme
+	cmp rax, r12
+	cmova r12, rax
 	
 	; (q,r) = somme div denominateur
 	mov rsi, [ad_somme]
@@ -406,6 +469,12 @@ iteration:
 	;mul qword [rsi] ; q était encore dans rax
 	mul r8 ; le numérateur est simplement le n° de colonne !
 	mov [rdi-8], rax
+	
+	
+	; Note la valeur max de retenue
+	cmp rax, r13
+	cmova r13, rax
+	
 	jmp .saute
 	
 		
@@ -680,6 +749,9 @@ printz:
 	push rdx
 	push rsi
 	push rdi
+	push r11
+	push r12
+	push r13
 	
 	
 	mov rdx,0
@@ -703,6 +775,9 @@ printz:
 	syscall
 	
 .chaine_nulle:
+	pop r13
+	pop r12
+	pop r11
 	pop rdi
 	pop rsi
 	pop rdx
